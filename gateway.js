@@ -25,6 +25,32 @@ function extractBookData(book) {
     };
 }
 
+// Invalidate cache entries for a specific book ID
+function invalidateBookCache(bookId) {
+    const keysToDelete = [];
+    
+    for (const key of cache.keys()) {
+        // Invalidate direct info endpoint
+        if (key === `/books/info/${bookId}` || key.startsWith(`/books/info/${bookId}?`)) {
+            keysToDelete.push(key);
+            continue;
+        }
+        
+        // Invalidate search results that might contain this book
+        if (key.startsWith('/books/search/')) {
+            const cachedData = cache.get(key);
+            if (Array.isArray(cachedData)) {
+                const hasBook = cachedData.some(book => book.id === bookId);
+                if (hasBook) {
+                    keysToDelete.push(key);
+                }
+            }
+        }
+    }
+    
+    keysToDelete.forEach(key => cache.delete(key));
+}
+
 function getNextCatalogService() {
     const url = CATALOG_SERVICE_URLS[catalogIndex % CATALOG_SERVICE_URLS.length];
     catalogIndex = (catalogIndex + 1) % CATALOG_SERVICE_URLS.length;
@@ -39,6 +65,18 @@ function getNextOrderService() {
 
 app.use(cors());
 app.use(express.json());
+
+// Cache invalidation endpoint (called by backend services before writes)
+app.post('/cache/invalidate', (req, res) => {
+    const { bookId } = req.body;
+    
+    if (!bookId) {
+        return res.status(400).json({ message: 'bookId is required' });
+    }
+    
+    invalidateBookCache(parseInt(bookId));
+    res.json({ message: 'Cache invalidated successfully', bookId });
+});
 
 app.use('/books', (req, res, next) => {
     const cacheKey = req.originalUrl || req.url;
