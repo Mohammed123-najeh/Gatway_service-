@@ -41,6 +41,9 @@ app.use(cors());
 app.use(express.json());
 
 app.use('/books', (req, res, next) => {
+    const cacheKey = req.originalUrl || req.url;
+    
+    // Handle write requests (PATCH, POST, PUT) - forward without caching
     if ((req.method === 'PATCH' || req.method === 'POST' || req.method === 'PUT') && req.body) {
         const bodyData = JSON.stringify(req.body);
         const targetUrl = new URL(getNextCatalogService());
@@ -66,6 +69,71 @@ app.use('/books', (req, res, next) => {
         proxyReq.end();
         return;
     }
+    
+    // Handle read requests (GET) - check cache first
+    if (req.method === 'GET') {
+        // Check if this is a cacheable endpoint (search or info)
+        const originalPath = req.originalUrl || req.url;
+        const isSearch = originalPath.includes('/search/');
+        const isInfo = originalPath.includes('/info/');
+        
+        if (isSearch || isInfo) {
+            // Check cache
+            if (cache.has(cacheKey)) {
+                const cachedData = cache.get(cacheKey);
+                return res.json(cachedData);
+            }
+            
+            // Cache miss - forward request
+            const target = getNextCatalogService();
+            const targetUrl = new URL(target);
+            
+            const proxyReq = http.request({
+                hostname: targetUrl.hostname,
+                port: targetUrl.port || 8080,
+                path: req.originalUrl || req.url,
+                method: 'GET'
+            }, (proxyRes) => {
+                let responseData = '';
+                
+                proxyRes.on('data', (chunk) => {
+                    responseData += chunk;
+                });
+                
+                proxyRes.on('end', () => {
+                    try {
+                        if (proxyRes.statusCode === 200) {
+                            const data = JSON.parse(responseData);
+                            
+                            // Extract and cache book data
+                            if (isInfo && data) {
+                                const cachedBook = extractBookData(data);
+                                cache.set(cacheKey, cachedBook);
+                            } else if (isSearch && Array.isArray(data)) {
+                                const cachedBooks = data.map(book => extractBookData(book));
+                                cache.set(cacheKey, cachedBooks);
+                            }
+                        }
+                        
+                        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                        res.end(responseData);
+                    } catch (err) {
+                        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                        res.end(responseData);
+                    }
+                });
+            });
+            
+            proxyReq.on('error', () => {
+                res.status(503).json({ message: 'Catalog service unavailable' });
+            });
+            
+            proxyReq.end();
+            return;
+        }
+    }
+    
+    // Non-cacheable requests - forward normally
     next();
 }, (req, res, next) => {
     const target = getNextCatalogService();
