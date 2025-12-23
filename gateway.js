@@ -12,6 +12,19 @@ const ORDER_SERVICE_URLS = (process.env.ORDER_SERVICE_URLS || 'http://order-serv
 let catalogIndex = 0;
 let orderIndex = 0;
 
+// In-memory cache for read requests
+const cache = new Map();
+
+// Extract cacheable book data (id, title, price, quantity)
+function extractBookData(book) {
+    return {
+        id: book.id || book.Id,
+        title: book.bookName || book.BookName,
+        price: book.cost || book.Cost,
+        quantity: book.numberOfItems || book.NumberOfItems
+    };
+}
+
 function getNextCatalogService() {
     const url = CATALOG_SERVICE_URLS[catalogIndex % CATALOG_SERVICE_URLS.length];
     catalogIndex = (catalogIndex + 1) % CATALOG_SERVICE_URLS.length;
