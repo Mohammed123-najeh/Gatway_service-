@@ -6,8 +6,23 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://catalog-service:8080';
-const ORDER_SERVICE_URL = process.env.ORDER_SERVICE_URL || 'http://order-service:8080';
+const CATALOG_SERVICE_URLS = (process.env.CATALOG_SERVICE_URLS || 'http://catalog-service-1:8080,http://catalog-service-2:8080').split(',').map(url => url.trim());
+const ORDER_SERVICE_URLS = (process.env.ORDER_SERVICE_URLS || 'http://order-service-1:8080,http://order-service-2:8080').split(',').map(url => url.trim());
+
+let catalogIndex = 0;
+let orderIndex = 0;
+
+function getNextCatalogService() {
+    const url = CATALOG_SERVICE_URLS[catalogIndex % CATALOG_SERVICE_URLS.length];
+    catalogIndex = (catalogIndex + 1) % CATALOG_SERVICE_URLS.length;
+    return url;
+}
+
+function getNextOrderService() {
+    const url = ORDER_SERVICE_URLS[orderIndex % ORDER_SERVICE_URLS.length];
+    orderIndex = (orderIndex + 1) % ORDER_SERVICE_URLS.length;
+    return url;
+}
 
 app.use(cors());
 app.use(express.json());
@@ -15,7 +30,7 @@ app.use(express.json());
 app.use('/books', (req, res, next) => {
     if ((req.method === 'PATCH' || req.method === 'POST' || req.method === 'PUT') && req.body) {
         const bodyData = JSON.stringify(req.body);
-        const targetUrl = new URL(CATALOG_SERVICE_URL);
+        const targetUrl = new URL(getNextCatalogService());
         const proxyReq = http.request({
             hostname: targetUrl.hostname,
             port: targetUrl.port || 8080,
@@ -39,8 +54,10 @@ app.use('/books', (req, res, next) => {
         return;
     }
     next();
-}, createProxyMiddleware({
-    target: CATALOG_SERVICE_URL,
+}, (req, res, next) => {
+    const target = getNextCatalogService();
+    return createProxyMiddleware({
+        target: target,
     changeOrigin: true,
     pathRewrite: {
         '^/books': '/books'
@@ -48,10 +65,13 @@ app.use('/books', (req, res, next) => {
     onError: (err, req, res) => {
         res.status(503).json({ message: 'Catalog service unavailable' });
     }
-}));
+    })(req, res, next);
+});
 
-app.use('/purchase', createProxyMiddleware({
-    target: ORDER_SERVICE_URL,
+app.use('/purchase', (req, res, next) => {
+    const target = getNextOrderService();
+    return createProxyMiddleware({
+        target: target,
     changeOrigin: true,
     pathRewrite: {
         '^/purchase': '/purchase'
@@ -59,7 +79,8 @@ app.use('/purchase', createProxyMiddleware({
     onError: (err, req, res) => {
         res.status(503).json({ message: 'Order service unavailable' });
     }
-}));
+    })(req, res, next);
+});
 
 app.get('/', (req, res) => {
     res.json({
@@ -80,7 +101,7 @@ app.use((req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Gateway service running on port ${PORT}`);
-    console.log(`Catalog Service: ${CATALOG_SERVICE_URL}`);
-    console.log(`Order Service: ${ORDER_SERVICE_URL}`);
+    console.log(`Catalog Services: ${CATALOG_SERVICE_URLS.join(', ')}`);
+    console.log(`Order Services: ${ORDER_SERVICE_URLS.join(', ')}`);
 });
 
